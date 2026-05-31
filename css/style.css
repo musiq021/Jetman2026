@@ -184,3 +184,20 @@ button:active { transform: scale(0.97); }
   background: var(--neon);
   box-shadow: none;
 }
+#debug .dbg-select {
+  grid-template-columns: auto 1fr;
+  margin-bottom: 10px;
+}
+#debug select {
+  grid-column: 2;
+  justify-self: stretch;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: rgba(8, 14, 28, 0.9);
+  border: 1px solid rgba(56, 246, 255, 0.4);
+  border-radius: 4px;
+  padding: 6px 8px;
+  touch-action: manipulation;
+}

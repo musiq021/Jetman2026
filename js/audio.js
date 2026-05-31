@@ -1,18 +1,27 @@
-/* audio.js — music from a pre-rendered file (gapless loop) + procedural SFX.
+/* audio.js — music via an HTML <audio> element + procedural SFX.
  *
- * The looping soundtrack is a static asset (assets/music.*) rendered offline by
- * tools/render-music.js. We decode it once and loop it through Web Audio for a
- * seamless join. SFX (thrust/blip/crash) stay fully procedural — cheap and
- * reactive. The first user gesture (init) unlocks audio per browser policy.
+ * Music plays through a plain <audio> tag rather than a Web Audio
+ * decodeAudioData/BufferSource. This is the robust path on iOS Safari, which
+ * (a) cannot decodeAudioData Ogg and is flaky with AAC, and (b) routes
+ * Web-Audio output through the hardware ring/silent switch. Native <audio>
+ * playback started from a user gesture sidesteps all of that and supports MP3
+ * universally. SFX stay on Web Audio (cheap, reactive); they're tiny blips so
+ * the silent-switch caveat doesn't matter for them.
  *
- * Format choice: AAC/.m4a is the primary (iOS Safari plays it natively and
- * loops cleanly); .ogg is offered first for Chrome/Firefox efficiency.
+ * Each track ships as .mp3 (iOS/universal primary) + .ogg (Chrome/FF). The
+ * <audio> element's <source> fallback picks whatever the browser supports.
  */
 (function () {
   "use strict";
 
-  // Source candidates in preference order; first the browser can decode wins.
-  const MUSIC_SOURCES = ["assets/music.ogg", "assets/music.m4a"];
+  // Track list — surfaced in the in-game config panel's selector.
+  const TRACKS = [
+    { id: "stage1", name: "Stage 1" },
+    { id: "stage2", name: "Stage 2" },
+    { id: "boss",   name: "Boss Fight" },
+    { id: "select", name: "Stage Select" },
+  ];
+  const DEFAULT_TRACK = "stage1";
 
   // notes used by SFX
   const NOTE = {};
@@ -29,27 +38,64 @@
       this.enabled = true;
       this.musicOn = false;
       this._lastThrust = 0;
-      this.buffer = null;       // decoded music
-      this.srcNode = null;      // current looping BufferSource
-      this._loading = null;     // in-flight fetch/decode promise
+      this.tracks = TRACKS;
+      this.trackId = localStorage.getItem("neoncave_track") || DEFAULT_TRACK;
+      this.musicVol = 0.55;
+      this.audioEl = null;      // HTMLAudioElement for music
     }
 
     init() {
-      if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
-      const AC = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AC();
+      // Music element (created once; safe before any AudioContext exists).
+      if (!this.audioEl) {
+        const a = document.createElement("audio");
+        a.loop = true;
+        a.preload = "auto";
+        a.volume = this.enabled ? this.musicVol : 0;
+        a.setAttribute("playsinline", "");
+        this._setSrc(a, this.trackId);
+        document.body.appendChild(a);
+        this.audioEl = a;
+      }
+      // Web Audio context for SFX only.
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+        this.master = g(this.ctx, 0.9);
+        this.master.connect(this.ctx.destination);
+        this.sfx = g(this.ctx, 0.6); this.sfx.connect(this.master);
+      } else if (this.ctx.state === "suspended") {
+        this.ctx.resume();
+      }
+    }
 
-      this.master = g(this.ctx, this.enabled ? 0.9 : 0);
-      this.master.connect(this.ctx.destination);
+    _setSrc(a, id) {
+      a.innerHTML = "";
+      for (const ext of ["mp3", "ogg"]) {
+        const s = document.createElement("source");
+        s.src = "assets/" + id + "." + ext;
+        s.type = ext === "mp3" ? "audio/mpeg" : "audio/ogg";
+        a.appendChild(s);
+      }
+      a.load();
+    }
 
-      this.music = g(this.ctx, 0.55); this.music.connect(this.master);
-      this.sfx   = g(this.ctx, 0.6);  this.sfx.connect(this.master);
+    listTracks() { return this.tracks; }
+    getTrack() { return this.trackId; }
 
-      this._load(); // kick off fetch/decode (safe to call repeatedly)
+    setTrack(id) {
+      if (!this.tracks.some(t => t.id === id)) return;
+      this.trackId = id;
+      localStorage.setItem("neoncave_track", id);
+      if (this.audioEl) {
+        const wasPlaying = this.musicOn;
+        this._setSrc(this.audioEl, id);
+        if (wasPlaying) this.audioEl.play().catch(() => {});
+      }
     }
 
     setEnabled(on) {
       this.enabled = on;
+      if (this.audioEl) this.audioEl.volume = on ? this.musicVol : 0;
       if (this.master) {
         const t = this.ctx.currentTime;
         this.master.gain.cancelScheduledValues(t);
@@ -58,59 +104,21 @@
     }
     toggle() { this.setEnabled(!this.enabled); return this.enabled; }
 
-    // Intensity hook kept for API compatibility; a fixed file can't change
-    // tempo, so we nudge the music level slightly as difficulty rises.
+    // Nudge music level slightly with difficulty for a touch of tension.
     setIntensity(t01) {
-      if (!this.music) return;
-      const lvl = 0.5 + Math.max(0, Math.min(1, t01)) * 0.12;
-      this.music.gain.setTargetAtTime(lvl, this.ctx.currentTime, 0.5);
-    }
-
-    _load() {
-      if (this.buffer || this._loading) return this._loading;
-      this._loading = (async () => {
-        for (const url of MUSIC_SOURCES) {
-          try {
-            const res = await fetch(url);
-            if (!res.ok) continue;
-            const data = await res.arrayBuffer();
-            const buf = await new Promise((resolve, reject) =>
-              this.ctx.decodeAudioData(data, resolve, reject));
-            this.buffer = buf;
-            if (this.musicOn) this._play(); // start now if we were asked to
-            return buf;
-          } catch (e) { /* try next format */ }
-        }
-        console.warn("NEONCAVE: no playable music source");
-        return null;
-      })();
-      return this._loading;
-    }
-
-    _play() {
-      if (!this.ctx || !this.buffer || this.srcNode) return;
-      const src = this.ctx.createBufferSource();
-      src.buffer = this.buffer;
-      src.loop = true;                 // gapless: Web Audio loops sample-accurately
-      src.connect(this.music);
-      src.start(0);
-      this.srcNode = src;
+      if (!this.audioEl || !this.enabled) return;
+      this.musicVol = 0.5 + Math.max(0, Math.min(1, t01)) * 0.12;
+      this.audioEl.volume = this.musicVol;
     }
 
     startMusic() {
-      if (!this.ctx) return;
       this.musicOn = true;
-      if (this.buffer) this._play();
-      else this._load();               // will auto-play on decode
+      if (this.audioEl) this.audioEl.play().catch(() => {});
     }
 
     stopMusic() {
       this.musicOn = false;
-      if (this.srcNode) {
-        try { this.srcNode.stop(); } catch (e) {}
-        this.srcNode.disconnect();
-        this.srcNode = null;
-      }
+      if (this.audioEl) this.audioEl.pause();
     }
 
     /* ---------- SFX (procedural) ---------- */

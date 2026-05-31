@@ -507,8 +507,40 @@
     const panel = document.createElement("div");
     panel.id = "debug";
     panel.className = "hidden";
+    // --- music section: track selector + mute ---
+    const mh = document.createElement("h3");
+    mh.textContent = "▸ MUSIC";
+    panel.appendChild(mh);
+
+    const trackRow = document.createElement("label");
+    trackRow.className = "dbg-select";
+    const trackName = document.createElement("span");
+    trackName.textContent = "Track";
+    const select = document.createElement("select");
+    for (const t of audio.listTracks()) {
+      const opt = document.createElement("option");
+      opt.value = t.id; opt.textContent = t.name;
+      if (t.id === audio.getTrack()) opt.selected = true;
+      select.appendChild(opt);
+    }
+    select.addEventListener("change", () => {
+      audio.init();           // ensure the element exists / is unlocked
+      audio.startMusic();     // a track change is a user gesture — play it
+      audio.setTrack(select.value);
+    });
+    trackRow.appendChild(trackName); trackRow.appendChild(select);
+    panel.appendChild(trackRow);
+
+    const muteRow = document.createElement("button");
+    muteRow.className = "dbg-reset";
+    const syncMute = () => { muteRow.textContent = audio.enabled ? "🔊 SOUND ON" : "🔇 SOUND OFF"; };
+    syncMute();
+    muteRow.addEventListener("click", () => { audio.toggle(); syncMute(); });
+    panel.appendChild(muteRow);
+
     const h = document.createElement("h3");
     h.textContent = "▸ TUNING";
+    h.style.marginTop = "14px";
     panel.appendChild(h);
 
     const rows = {};
