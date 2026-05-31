@@ -1,9 +1,9 @@
 # Audio Credits
 
 ## Music
-- **Track:** "Synthwave House Loop"
-- **Author:** Fupi
-- **Source:** https://opengameart.org/content/synthwave-house-loop
+- **Track:** "Stage 1" (from *Chiptune Adventures*)
+- **Author:** Juhani Junkala (SubspaceAudio)
+- **Source:** https://opengameart.org/content/4-chiptunes-adventure
 - **License:** CC0 1.0 (public domain dedication — no attribution required;
   credited here as a courtesy)
 
