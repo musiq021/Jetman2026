@@ -1,57 +1,37 @@
-/* audio.js — procedural "synthwave cruiser" soundtrack + SFX (Web Audio, no files).
+/* audio.js — music from a pre-rendered file (gapless loop) + procedural SFX.
  *
- * 8-bar loop, progression i-VI-III-VII in A minor (Am-F-C-G), with:
- *   - four-on-the-floor-ish drum kit (kick/snare/hats) + fills
- *   - pulsing 8th-note synth bass
- *   - detuned saw pad bed
- *   - plucky 16th arpeggio through a tempo-synced tape delay
- *   - a lead melody that enters in the second half (bars 5-8)
- * Tempo nudges up with gameplay difficulty for tension.
+ * The looping soundtrack is a static asset (assets/music.*) rendered offline by
+ * tools/render-music.js. We decode it once and loop it through Web Audio for a
+ * seamless join. SFX (thrust/blip/crash) stay fully procedural — cheap and
+ * reactive. The first user gesture (init) unlocks audio per browser policy.
+ *
+ * Format choice: AAC/.m4a is the primary (iOS Safari plays it natively and
+ * loops cleanly); .ogg is offered first for Chrome/Firefox efficiency.
  */
 (function () {
   "use strict";
 
+  // Source candidates in preference order; first the browser can decode wins.
+  const MUSIC_SOURCES = ["assets/music.ogg", "assets/music.m4a"];
+
+  // notes used by SFX
   const NOTE = {};
   (function () {
-    const n = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const n = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
     for (let o = 1; o <= 6; o++)
       for (let i = 0; i < 12; i++)
-        NOTE[n[i] + o] = 440 * Math.pow(2, (o * 12 + i + 12 - 69) / 12);
+        NOTE[n[i] + o] = 440 * Math.pow(2, (o*12 + i + 12 - 69) / 12);
   })();
-
-  // --- progression: one chord per bar over 16 bars (longer = less loopy) ---
-  const CH = {
-    Am: { bass: "A2", pad: ["A3", "C4", "E4"], arp: ["A3", "C4", "E4", "A4"] },
-    F:  { bass: "F2", pad: ["F3", "A3", "C4"], arp: ["F3", "A3", "C4", "F4"] },
-    C:  { bass: "C2", pad: ["C4", "E4", "G4"], arp: ["C4", "E4", "G4", "C5"] },
-    G:  { bass: "G2", pad: ["G3", "B3", "D4"], arp: ["G3", "B3", "D4", "G4"] },
-    Dm: { bass: "D2", pad: ["D3", "F3", "A3"], arp: ["D3", "F3", "A3", "D4"] },
-    Em: { bass: "E2", pad: ["E3", "G3", "B3"], arp: ["E3", "G3", "B3", "E4"] },
-  };
-  // A 16-bar journey through A natural minor that resolves G -> Am at the loop.
-  const BARS = [
-    CH.Am, CH.F,  CH.C,  CH.G,
-    CH.Am, CH.Dm, CH.Em, CH.G,
-    CH.C,  CH.G,  CH.Am, CH.F,
-    CH.Dm, CH.Em, CH.F,  CH.G,
-  ];
-  const STEPS = BARS.length * 16;     // 256 sixteenth-note steps (~34s)
-  const ARP_IDX = [0, 1, 2, 3, 2, 3, 2, 1, 0, 1, 2, 3, 3, 2, 1, 0];
-  // Syncopated arp rhythm (gaps make it breathe; the delay fills them in).
-  const ARP_HITS = [0, 3, 6, 8, 11, 14];
 
   class AudioEngine {
     constructor() {
       this.ctx = null;
       this.enabled = true;
       this.musicOn = false;
-      this.bpm = 112;
-      this.step = 0;
-      this.nextTime = 0;
-      this.lookahead = 0.025;
-      this.ahead = 0.12;
-      this._timer = null;
       this._lastThrust = 0;
+      this.buffer = null;       // decoded music
+      this.srcNode = null;      // current looping BufferSource
+      this._loading = null;     // in-flight fetch/decode promise
     }
 
     init() {
@@ -62,19 +42,11 @@
       this.master = g(this.ctx, this.enabled ? 0.9 : 0);
       this.master.connect(this.ctx.destination);
 
-      this.music = g(this.ctx, 0.5); this.music.connect(this.master);
-      this.sfx = g(this.ctx, 0.6);  this.sfx.connect(this.master);
+      this.music = g(this.ctx, 0.55); this.music.connect(this.master);
+      this.sfx   = g(this.ctx, 0.6);  this.sfx.connect(this.master);
 
-      // tempo-synced feedback delay (the synthwave echo) on a send bus
-      this.delay = this.ctx.createDelay(1.0);
-      this.delay.delayTime.value = this._dottedEighth();
-      this.fb = g(this.ctx, 0.34);
-      this.delay.connect(this.fb); this.fb.connect(this.delay);
-      this.wet = g(this.ctx, 0.32);
-      this.delay.connect(this.wet); this.wet.connect(this.music);
+      this._load(); // kick off fetch/decode (safe to call repeatedly)
     }
-
-    _dottedEighth() { return (60 / this.bpm / 4) * 3; }
 
     setEnabled(on) {
       this.enabled = on;
@@ -86,158 +58,62 @@
     }
     toggle() { this.setEnabled(!this.enabled); return this.enabled; }
 
+    // Intensity hook kept for API compatibility; a fixed file can't change
+    // tempo, so we nudge the music level slightly as difficulty rises.
     setIntensity(t01) {
-      this.bpm = 112 + Math.max(0, Math.min(1, t01)) * 22; // 112 -> 134
-      if (this.delay) this.delay.delayTime.setTargetAtTime(this._dottedEighth(), this.ctx.currentTime, 0.3);
+      if (!this.music) return;
+      const lvl = 0.5 + Math.max(0, Math.min(1, t01)) * 0.12;
+      this.music.gain.setTargetAtTime(lvl, this.ctx.currentTime, 0.5);
+    }
+
+    _load() {
+      if (this.buffer || this._loading) return this._loading;
+      this._loading = (async () => {
+        for (const url of MUSIC_SOURCES) {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const data = await res.arrayBuffer();
+            const buf = await new Promise((resolve, reject) =>
+              this.ctx.decodeAudioData(data, resolve, reject));
+            this.buffer = buf;
+            if (this.musicOn) this._play(); // start now if we were asked to
+            return buf;
+          } catch (e) { /* try next format */ }
+        }
+        console.warn("NEONCAVE: no playable music source");
+        return null;
+      })();
+      return this._loading;
+    }
+
+    _play() {
+      if (!this.ctx || !this.buffer || this.srcNode) return;
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.buffer;
+      src.loop = true;                 // gapless: Web Audio loops sample-accurately
+      src.connect(this.music);
+      src.start(0);
+      this.srcNode = src;
     }
 
     startMusic() {
-      if (!this.ctx || this.musicOn) return;
+      if (!this.ctx) return;
       this.musicOn = true;
-      this.step = 0;
-      this.nextTime = this.ctx.currentTime + 0.08;
-      const tick = () => {
-        if (!this.musicOn) return;
-        const dt = 60 / this.bpm / 4;
-        while (this.nextTime < this.ctx.currentTime + this.ahead) {
-          this._step(this.step % STEPS, this.nextTime, dt);
-          this.nextTime += dt;
-          this.step++;
-        }
-        this._timer = setTimeout(tick, this.lookahead * 1000);
-      };
-      tick();
+      if (this.buffer) this._play();
+      else this._load();               // will auto-play on decode
     }
-    stopMusic() { this.musicOn = false; if (this._timer) { clearTimeout(this._timer); this._timer = null; } }
 
-    _step(step, time, dt) {
-      const bar = (step / 16) | 0;
-      const six = step % 16;
-      const chord = BARS[bar];
-
-      // Section flags drive an evolving 16-bar arrangement so it loops less
-      // obviously: sparse intro, drums/arp build, a mid breakdown, then full.
-      const drumsOn = bar >= 2 && !(bar === 8 || bar === 9); // drop for breakdown
-      const arpOn   = bar >= 1;
-      const bassFull = bar >= 2;                              // 8th pulse vs root-on-beat
-      const half2 = bar >= 8;                                 // second half: busier
-
-      // --- pad: sustain chord across the whole bar ---
-      if (six === 0) {
-        for (const p of chord.pad) this._pad(NOTE[p], time, dt * 16);
-      }
-
-      // --- bass ---
-      if (bassFull ? six % 2 === 0 : (six === 0 || six === 8)) {
-        const accent = six === 0 || six === 8;
-        const f = NOTE[chord.bass] * (six === 14 && bassFull ? 2 : 1);
-        this._bass(f, time, dt * 1.7, accent ? 0.28 : 0.2);
-      }
-
-      // --- arp: syncopated, soft, sent to delay (denser in the 2nd half) ---
-      if (arpOn && (ARP_HITS.includes(six) || (half2 && six % 2 === 1))) {
-        this._arp(NOTE[chord.arp[ARP_IDX[six]]], time, dt * 1.6);
-      }
-
-      // --- drums ---
-      if (drumsOn) {
-        if (six === 0 || six === 8) this._kick(time);
-        if (bar % 2 === 1 && six === 14) this._kick(time);     // groove push
-        if (six === 4 || six === 12) this._snare(time);
-        if (bar === 15 && (six === 8 || six === 10 || six === 12 || six === 14))
-          this._snare(time, 0.18);                             // turnaround fill
-        if (six % 2 === 0) this._hat(time, six % 4 === 2 ? 0.06 : 0.035, six === 14);
+    stopMusic() {
+      this.musicOn = false;
+      if (this.srcNode) {
+        try { this.srcNode.stop(); } catch (e) {}
+        this.srcNode.disconnect();
+        this.srcNode = null;
       }
     }
 
-    /* ---------- instruments ---------- */
-    _pad(freq, time, dur) {
-      const o1 = osc(this.ctx, "sawtooth", freq, -7);
-      const o2 = osc(this.ctx, "sawtooth", freq, +7);
-      const f = lp(this.ctx, 1600);
-      const env = g(this.ctx, 0);
-      env.gain.setValueAtTime(0, time);
-      env.gain.linearRampToValueAtTime(0.05, time + 0.25);
-      env.gain.linearRampToValueAtTime(0.04, time + dur * 0.7);
-      env.gain.linearRampToValueAtTime(0.0008, time + dur);
-      o1.connect(f); o2.connect(f); f.connect(env); env.connect(this.music);
-      o1.start(time); o2.start(time); o1.stop(time + dur + 0.05); o2.stop(time + dur + 0.05);
-    }
-
-    _bass(freq, time, dur, peak) {
-      const o = osc(this.ctx, "sawtooth", freq);
-      const sub = osc(this.ctx, "square", freq / 2);
-      const f = lp(this.ctx, 900);
-      const env = g(this.ctx, 0);
-      env.gain.setValueAtTime(0, time);
-      env.gain.linearRampToValueAtTime(peak, time + 0.012);
-      env.gain.exponentialRampToValueAtTime(0.0008, time + dur);
-      o.connect(f); sub.connect(f); f.connect(env); env.connect(this.music);
-      o.start(time); sub.start(time); o.stop(time + dur + 0.03); sub.stop(time + dur + 0.03);
-    }
-
-    _arp(freq, time, dur) {
-      // triangle = warmer/softer than the old square (less "irritating")
-      const o = osc(this.ctx, "triangle", freq, +3);
-      const f = lp(this.ctx, 2200);
-      const env = g(this.ctx, 0);
-      env.gain.setValueAtTime(0, time);
-      env.gain.linearRampToValueAtTime(0.07, time + 0.006);
-      env.gain.exponentialRampToValueAtTime(0.0008, time + dur);
-      o.connect(f); f.connect(env);
-      env.connect(this.music); env.connect(this.delay);
-      o.start(time); o.stop(time + dur + 0.02);
-    }
-
-    _kick(time) {
-      const o = this.ctx.createOscillator();
-      const env = g(this.ctx, 0);
-      o.frequency.setValueAtTime(140, time);
-      o.frequency.exponentialRampToValueAtTime(45, time + 0.12);
-      env.gain.setValueAtTime(0.6, time);
-      env.gain.exponentialRampToValueAtTime(0.0008, time + 0.2);
-      o.connect(env); env.connect(this.music);
-      o.start(time); o.stop(time + 0.22);
-    }
-
-    _snare(time, vol) {
-      vol = vol || 0.28;
-      const n = noiseSrc(this.ctx, this._noise());
-      const hp = this.ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1400;
-      const env = g(this.ctx, 0);
-      env.gain.setValueAtTime(vol, time);
-      env.gain.exponentialRampToValueAtTime(0.0008, time + 0.16);
-      n.connect(hp); hp.connect(env); env.connect(this.music);
-      n.start(time); n.stop(time + 0.18);
-      const o = osc(this.ctx, "triangle", 190);
-      const oe = g(this.ctx, 0);
-      oe.gain.setValueAtTime(vol * 0.5, time);
-      oe.gain.exponentialRampToValueAtTime(0.0008, time + 0.09);
-      o.connect(oe); oe.connect(this.music);
-      o.start(time); o.stop(time + 0.1);
-    }
-
-    _hat(time, vol, open) {
-      const n = noiseSrc(this.ctx, this._noise());
-      const hp = this.ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 8000;
-      const env = g(this.ctx, 0);
-      const dur = open ? 0.14 : 0.04;
-      env.gain.setValueAtTime(vol, time);
-      env.gain.exponentialRampToValueAtTime(0.0006, time + dur);
-      n.connect(hp); hp.connect(env); env.connect(this.music);
-      n.start(time); n.stop(time + dur + 0.02);
-    }
-
-    _noise() {
-      if (this._nb) return this._nb;
-      const len = this.ctx.sampleRate * 0.4;
-      const b = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-      const d = b.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-      return (this._nb = b);
-    }
-
-    /* ---------- SFX ---------- */
+    /* ---------- SFX (procedural) ---------- */
     thrust() {
       if (!this.ctx) return;
       const t = this.ctx.currentTime;
@@ -277,6 +153,15 @@
       oe.gain.exponentialRampToValueAtTime(0.0008, t + 0.5);
       o.connect(oe); oe.connect(this.sfx);
       o.start(t); o.stop(t + 0.52);
+    }
+
+    _noise() {
+      if (this._nb) return this._nb;
+      const len = this.ctx.sampleRate * 0.4;
+      const b = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      return (this._nb = b);
     }
   }
 
