@@ -7,21 +7,25 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
-  // ---- tunable constants (per 1/60s physics step) ----
-  const STEP = 1000 / 60;
-  const GRAVITY = 0.46;     // downward accel when not thrusting
-  const THRUST  = 0.46;     // upward accel while held (symmetric = classic SFCave feel)
-  const MAX_VY  = 8.5;      // terminal velocity (both directions)
+  // ---- fixed constants ----
+  const STEP = 1000 / 60;   // physics timestep
   const PLAYER_X = 200;     // player's fixed horizontal position
   const PLAYER_R = 6;       // collision radius
-
-  const BASE_SPEED = 3.0;   // px/step at difficulty 0
-  const EXTRA_SPEED = 3.4;  // added at difficulty 1
-  const RAMP_DIST = 16000;  // px traveled to reach max difficulty
-
   const MARGIN = 26;        // min wall thickness top/bottom
-  const MAX_GAP = 250;      // tunnel opening at start
-  const MIN_GAP = 110;      // tunnel opening at max difficulty
+
+  // ---- live-tunable params (adjustable via the in-game debug panel) ----
+  // Defaults are gentle; open the panel (gear button / "D") to tune.
+  const P = {
+    gravity: 0.30,     // downward accel/step when not thrusting
+    thrust: 0.32,      // upward accel/step while held
+    maxVy: 6.5,        // terminal velocity (both directions)
+    baseSpeed: 2.6,    // scroll px/step at difficulty 0
+    extraSpeed: 3.0,   // added scroll px/step at difficulty 1
+    rampDist: 16000,   // px traveled to reach max difficulty
+    maxGap: 260,       // tunnel opening at start
+    minGap: 120,       // tunnel opening at max difficulty
+  };
+  const P_DEFAULTS = Object.assign({}, P);
 
   const audio = new window.AudioEngine();
 
@@ -30,7 +34,8 @@
   let best = +(localStorage.getItem("neoncave_best") || 0);
 
   let scrollX, distance, score, difficulty, speed;
-  let player, vy, holding;
+  let player, vy, holding, ready;   // `ready` = pre-flight hover, no gravity/collision
+  let readyPulse = 0;
   let trail, particles, stars, blocks;
   let nextBlockAt;            // worldX at which to spawn next block
   let cavePhase;             // randomized phases for the tunnel shape
@@ -64,15 +69,15 @@
     return H / 2 + norm * maxDev * 0.92;
   }
   function caveGap() {
-    return MAX_GAP - (MAX_GAP - MIN_GAP) * difficulty;
+    return P.maxGap - (P.maxGap - P.minGap) * difficulty;
   }
   function caveTopAt(worldX) { return caveCenter(worldX) - caveGap() / 2; }
   function caveBotAt(worldX) { return caveCenter(worldX) + caveGap() / 2; }
 
   // ---------- lifecycle ----------
   function reset() {
-    scrollX = 0; distance = 0; score = 0; difficulty = 0; speed = BASE_SPEED;
-    vy = 0; holding = false; shake = 0;
+    scrollX = 0; distance = 0; score = 0; difficulty = 0; speed = P.baseSpeed;
+    vy = 0; holding = false; ready = true; shake = 0;
     trail = []; particles = []; blocks = [];
     cavePhase = [Math.random() * 6.28, Math.random() * 6.28,
                  Math.random() * 6.28, Math.random() * 6.28];
@@ -156,15 +161,29 @@
 
   // ---------- update ----------
   function update() {
+    // Pre-flight hover: ship floats at center, no gravity/scroll/collision,
+    // until the first thrust input. Fixes the instant-crash on start (esp. touch).
+    if (ready) {
+      readyPulse += 0.12;
+      player.y += (H / 2 - player.y) * 0.12; // ease to center
+      vy = 0;
+      // keep the starfield drifting so the screen feels alive
+      for (const s of stars) {
+        s.x -= P.baseSpeed * s.z * 0.35;
+        if (s.x < 0) { s.x = W; s.y = Math.random() * H; }
+      }
+      return;
+    }
+
     // difficulty & speed
-    difficulty = Math.min(1, distance / RAMP_DIST);
-    speed = BASE_SPEED + EXTRA_SPEED * difficulty;
+    difficulty = Math.min(1, distance / P.rampDist);
+    speed = P.baseSpeed + P.extraSpeed * difficulty;
     audio.setIntensity(difficulty);
 
     // physics
-    vy += holding ? -THRUST : GRAVITY;
-    if (vy > MAX_VY) vy = MAX_VY;
-    if (vy < -MAX_VY) vy = -MAX_VY;
+    vy += holding ? -P.thrust : P.gravity;
+    if (vy > P.maxVy) vy = P.maxVy;
+    if (vy < -P.maxVy) vy = -P.maxVy;
     player.y += vy;
 
     // advance world
@@ -235,9 +254,34 @@
     drawBlocks();
     if (state !== "over") drawPlayer();
     drawParticles();
+    if (state === "play" && ready) drawReadyHint();
     drawScanlines();
 
     ctx.restore();
+  }
+
+  function drawReadyHint() {
+    const a = 0.55 + 0.35 * Math.sin(readyPulse);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = "#eafdff";
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = "#38f6ff";
+    ctx.font = "bold 26px 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("TAP & HOLD TO FLY", W / 2, H / 2 - 70);
+    ctx.font = "14px 'Courier New', monospace";
+    ctx.globalAlpha = a * 0.8;
+    ctx.fillText("release to fall", W / 2, H / 2 - 46);
+    ctx.restore();
+    ctx.shadowBlur = 0;
+    // little down-arrow tether from the hint toward the waiting ship
+    ctx.strokeStyle = `rgba(56,246,255,${a * 0.5})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(player.x, H / 2 - 36);
+    ctx.lineTo(player.x, player.y - 16);
+    ctx.stroke();
   }
 
   function drawBackground() {
@@ -320,7 +364,7 @@
     }
 
     // ship — a glowing triangle, tilted by vertical velocity
-    const tilt = Math.max(-0.6, Math.min(0.6, vy / MAX_VY * 0.6));
+    const tilt = Math.max(-0.6, Math.min(0.6, vy / P.maxVy * 0.6));
     ctx.save();
     ctx.translate(player.x, player.y);
     ctx.rotate(tilt);
@@ -388,6 +432,7 @@
   // ---------- input ----------
   function press() {
     if (state === "play") {
+      ready = false;        // first input begins the flight
       holding = true;
       audio.thrust();
     }
@@ -416,6 +461,8 @@
       else primaryAction();
     } else if (e.key === "m" || e.key === "M") {
       audio.toggle();
+    } else if (e.key === "d" || e.key === "D") {
+      debugPanel.classList.toggle("hidden");
     }
   });
   window.addEventListener("keyup", (e) => {
@@ -435,6 +482,68 @@
     if (document.hidden) audio.stopMusic();
     else if (state === "play") audio.startMusic();
   });
+
+  // ---------- debug / tuning panel ----------
+  // Live sliders for the physics params. Toggle with the gear button or "D".
+  const DBG = [
+    { k: "gravity",    min: 0.05, max: 1.0,  step: 0.01, label: "Gravity" },
+    { k: "thrust",     min: 0.05, max: 1.0,  step: 0.01, label: "Thrust" },
+    { k: "maxVy",      min: 2,    max: 12,   step: 0.5,  label: "Max speed (vy)" },
+    { k: "baseSpeed",  min: 1,    max: 6,    step: 0.1,  label: "Scroll: base" },
+    { k: "extraSpeed", min: 0,    max: 6,    step: 0.1,  label: "Scroll: +difficulty" },
+    { k: "rampDist",   min: 4000, max: 40000,step: 1000, label: "Ramp distance" },
+    { k: "maxGap",     min: 140,  max: 360,  step: 5,    label: "Start gap" },
+    { k: "minGap",     min: 70,   max: 220,  step: 5,    label: "Hardest gap" },
+  ];
+
+  function buildDebugPanel() {
+    const panel = document.createElement("div");
+    panel.id = "debug";
+    panel.className = "hidden";
+    const h = document.createElement("h3");
+    h.textContent = "▸ TUNING";
+    panel.appendChild(h);
+
+    const rows = {};
+    for (const d of DBG) {
+      const row = document.createElement("label");
+      const name = document.createElement("span");
+      const val = document.createElement("b");
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = d.min; input.max = d.max; input.step = d.step;
+      input.value = P[d.k];
+      name.textContent = d.label;
+      val.textContent = P[d.k];
+      input.addEventListener("input", () => {
+        P[d.k] = parseFloat(input.value);
+        val.textContent = P[d.k];
+      });
+      row.appendChild(name); row.appendChild(val); row.appendChild(input);
+      panel.appendChild(row);
+      rows[d.k] = { input, val };
+    }
+
+    const reset = document.createElement("button");
+    reset.textContent = "RESET DEFAULTS";
+    reset.className = "dbg-reset";
+    reset.addEventListener("click", () => {
+      Object.assign(P, P_DEFAULTS);
+      for (const d of DBG) { rows[d.k].input.value = P[d.k]; rows[d.k].val.textContent = P[d.k]; }
+    });
+    panel.appendChild(reset);
+
+    const gear = document.createElement("button");
+    gear.id = "gear";
+    gear.textContent = "⚙";
+    gear.title = "Tuning panel (D)";
+    gear.addEventListener("click", (e) => { e.stopPropagation(); panel.classList.toggle("hidden"); });
+
+    document.getElementById("frame").appendChild(panel);
+    document.getElementById("frame").appendChild(gear);
+    return panel;
+  }
+  const debugPanel = buildDebugPanel();
 
   // ---------- boot ----------
   reset();
