@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>NEONCAVE — an SFCave clone</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="frame">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <span id="score">0</span>
+      <span id="best">BEST 0</span>
+    </div>
+
+    <!-- Title / menu overlay -->
+    <div id="overlay" class="overlay">
+      <h1>NEON<span>CAVE</span></h1>
+      <p class="tag">an SFCave clone</p>
+      <p class="how">
+        <b>Hold</b> mouse / touch / <b>SPACE</b> to rise &nbsp;·&nbsp; release to fall<br/>
+        Thread the cave. Don't touch the walls or blocks.
+      </p>
+      <button id="startBtn">PRESS TO FLY</button>
+      <p class="mute">M — toggle sound</p>
+    </div>
+
+    <!-- Game over overlay -->
+    <div id="gameover" class="overlay hidden">
+      <h2>WRECKED</h2>
+      <p class="final"><span id="finalScore">0</span></p>
+      <p class="bestline">best <span id="bestScore">0</span></p>
+      <button id="retryBtn">FLY AGAIN</button>
+      <p class="mute">SPACE / click to retry</p>
+    </div>
+  </div>
+
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

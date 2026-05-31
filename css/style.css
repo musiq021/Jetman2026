@@ -1,0 +1,109 @@
+:root {
+  --bg: #04060d;
+  --neon: #38f6ff;
+  --neon-soft: rgba(56, 246, 255, 0.55);
+  --pink: #ff3c91;
+  --ink: #aef3ff;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: #000;
+  color: var(--ink);
+  font-family: "Courier New", ui-monospace, monospace;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 40%, #0a1226 0%, #04060d 60%, #000 100%);
+}
+
+#game {
+  display: block;
+  width: min(100vw, 177.7vh);   /* keep 16:9 */
+  height: min(56.25vw, 100vh);
+  background: transparent;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: pointer;
+  box-shadow: 0 0 60px rgba(56, 246, 255, 0.08);
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  position: absolute;
+  top: 18px; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 26px;
+  font-size: clamp(16px, 2.4vw, 26px);
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px var(--neon-soft);
+  pointer-events: none;
+}
+#score { color: #fff; font-weight: bold; }
+#best  { color: var(--neon); opacity: .75; }
+
+/* ---------- Overlays ---------- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  padding: 20px;
+  background: rgba(4, 6, 13, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+h1 {
+  font-size: clamp(40px, 9vw, 92px);
+  letter-spacing: 8px;
+  color: #fff;
+  text-shadow: 0 0 18px var(--neon), 0 0 40px var(--neon-soft);
+}
+h1 span { color: var(--neon); }
+
+h2 {
+  font-size: clamp(34px, 7vw, 70px);
+  letter-spacing: 6px;
+  color: var(--pink);
+  text-shadow: 0 0 18px rgba(255, 60, 145, 0.7);
+}
+
+.tag { letter-spacing: 4px; opacity: .7; margin-top: -8px; }
+.how { font-size: clamp(12px, 1.8vw, 16px); line-height: 1.7; opacity: .85; max-width: 540px; }
+.final { font-size: clamp(48px, 10vw, 96px); color: #fff; text-shadow: 0 0 20px var(--neon-soft); }
+.bestline { letter-spacing: 3px; color: var(--neon); opacity: .8; }
+.mute { font-size: 12px; letter-spacing: 2px; opacity: .45; margin-top: 6px; }
+
+button {
+  margin-top: 10px;
+  padding: 14px 34px;
+  font-family: inherit;
+  font-size: clamp(16px, 2.4vw, 22px);
+  letter-spacing: 4px;
+  color: var(--bg);
+  background: var(--neon);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  box-shadow: 0 0 24px var(--neon-soft);
+  transition: transform .08s ease, box-shadow .2s ease;
+}
+button:hover { transform: scale(1.04); box-shadow: 0 0 40px var(--neon); }
+button:active { transform: scale(0.97); }
+
+.hidden { display: none !important; }
