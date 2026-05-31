@@ -29,6 +29,11 @@
 
   const audio = new window.AudioEngine();
 
+  // Optional non-SFCave camera mode: pin the ship vertically at screen-center
+  // and scroll the cave around it. Purely visual — collisions stay in world
+  // space, so difficulty is identical. Persisted across sessions.
+  let lockY = localStorage.getItem("neoncave_locky") === "1";
+
   // ---- game state ----
   let state = "menu"; // menu | play | over
   let best = +(localStorage.getItem("neoncave_best") || 0);
@@ -249,11 +254,19 @@
       ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
     }
 
+    // Background/starfield drawn in screen space (parallax independent of camera).
     drawBackground();
-    drawCave();
+
+    // World layer: optionally shift vertically so the ship sits at center.
+    const camY = lockY ? (H / 2 - player.y) : 0;
+    ctx.save();
+    ctx.translate(0, camY);
+    drawCave(camY);
     drawBlocks();
     if (state !== "over") drawPlayer();
     drawParticles();
+    ctx.restore();
+
     if (state === "play" && ready) drawReadyHint();
     drawScanlines();
 
@@ -294,7 +307,8 @@
     ctx.globalAlpha = 1;
   }
 
-  function drawCave() {
+  function drawCave(camY) {
+    camY = camY || 0;
     const step = 8;
     // Build edge points across the screen.
     const tops = [], bots = [];
@@ -304,19 +318,24 @@
       bots.push([x, caveBotAt(wx)]);
     }
 
+    // Fills must cover the visible region even when the camera is shifted, so
+    // close the wall polygons well beyond the viewport in world space.
+    const fillTop = -camY - H;
+    const fillBot = -camY + 2 * H;
+
     // Filled solid walls (dark, slightly blue).
     ctx.fillStyle = "#070d1c";
     ctx.beginPath();
-    ctx.moveTo(0, 0);
+    ctx.moveTo(0, fillTop);
     for (const [x, y] of tops) ctx.lineTo(x, y);
-    ctx.lineTo(W, 0);
+    ctx.lineTo(W, fillTop);
     ctx.closePath();
     ctx.fill();
 
     ctx.beginPath();
-    ctx.moveTo(0, H);
+    ctx.moveTo(0, fillBot);
     for (const [x, y] of bots) ctx.lineTo(x, y);
-    ctx.lineTo(W, H);
+    ctx.lineTo(W, fillBot);
     ctx.closePath();
     ctx.fill();
 
@@ -537,6 +556,29 @@
     syncMute();
     muteRow.addEventListener("click", () => { audio.toggle(); syncMute(); });
     panel.appendChild(muteRow);
+
+    // --- display section: vertical camera lock (non-SFCave) ---
+    const dh = document.createElement("h3");
+    dh.textContent = "▸ DISPLAY";
+    dh.style.marginTop = "14px";
+    panel.appendChild(dh);
+
+    const lockBtn = document.createElement("button");
+    lockBtn.className = "dbg-reset";
+    const syncLock = () => {
+      lockBtn.textContent = lockY ? "🔒 SHIP CENTERED (Y)" : "🔓 SHIP MOVES (Y)";
+    };
+    syncLock();
+    lockBtn.addEventListener("click", () => {
+      lockY = !lockY;
+      localStorage.setItem("neoncave_locky", lockY ? "1" : "0");
+      syncLock();
+    });
+    panel.appendChild(lockBtn);
+    const lockNote = document.createElement("p");
+    lockNote.className = "dbg-note";
+    lockNote.textContent = "centered = non-SFCave camera; visual only";
+    panel.appendChild(lockNote);
 
     const h = document.createElement("h3");
     h.textContent = "▸ TUNING";

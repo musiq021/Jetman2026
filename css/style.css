@@ -188,6 +188,13 @@ button:active { transform: scale(0.97); }
   grid-template-columns: auto 1fr;
   margin-bottom: 10px;
 }
+#debug .dbg-note {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  opacity: 0.5;
+  text-align: center;
+}
 #debug select {
   grid-column: 2;
   justify-self: stretch;
