@@ -54,11 +54,13 @@ difficulty rises, a parallax starfield, a tilting triangular ship with a fading
 motion trail and thrust flame, particle explosion + screen-shake on death, and a
 subtle CRT scanline overlay.
 
-**Music.** Procedurally generated with the Web Audio API (`js/audio.js`) — no
-audio files. A look-ahead scheduler plays a minor-key bassline + 16th-note
-arpeggio with hats; tempo rises with difficulty. SFX (thrust, milestone blip,
-crash) are synthesized on the fly. Audio is started from the first user gesture to
-respect browser autoplay policies.
+**Music.** A licensed synthwave track ("Synthwave House Loop" by Fupi, CC0 —
+see `CREDITS.md`), shipped as `assets/music.ogg` (Vorbis) + `assets/music.m4a`
+(AAC, for iOS Safari, which doesn't reliably play Ogg). `js/audio.js` fetches,
+decodes, and gaplessly loops it via a Web Audio `BufferSource`, picking the first
+format the browser supports. SFX (thrust, milestone blip, crash) are still
+synthesized on the fly. Audio starts from the first user gesture to respect
+browser autoplay policies.
 
 ## Architecture
 
