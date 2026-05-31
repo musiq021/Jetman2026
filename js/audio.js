@@ -19,30 +19,26 @@
         NOTE[n[i] + o] = 440 * Math.pow(2, (o * 12 + i + 12 - 69) / 12);
   })();
 
-  // --- progression: one chord per bar over 8 bars ---
+  // --- progression: one chord per bar over 16 bars (longer = less loopy) ---
   const CH = {
     Am: { bass: "A2", pad: ["A3", "C4", "E4"], arp: ["A3", "C4", "E4", "A4"] },
     F:  { bass: "F2", pad: ["F3", "A3", "C4"], arp: ["F3", "A3", "C4", "F4"] },
     C:  { bass: "C2", pad: ["C4", "E4", "G4"], arp: ["C4", "E4", "G4", "C5"] },
     G:  { bass: "G2", pad: ["G3", "B3", "D4"], arp: ["G3", "B3", "D4", "G4"] },
+    Dm: { bass: "D2", pad: ["D3", "F3", "A3"], arp: ["D3", "F3", "A3", "D4"] },
+    Em: { bass: "E2", pad: ["E3", "G3", "B3"], arp: ["E3", "G3", "B3", "E4"] },
   };
-  const BARS = [CH.Am, CH.F, CH.C, CH.G, CH.Am, CH.F, CH.C, CH.G];
-  const STEPS = BARS.length * 16;           // 128 sixteenth-note steps
-  const ARP_IDX = [0, 1, 2, 3, 2, 3, 2, 1, 0, 1, 2, 3, 3, 2, 1, 0];
-
-  // Lead melody for bars 5-8 (section B). {step, note, len16}
-  const LEAD = [
-    { s: 64, n: "A4", l: 4 }, { s: 68, n: "C5", l: 2 }, { s: 70, n: "E5", l: 2 },
-    { s: 72, n: "D5", l: 4 }, { s: 76, n: "C5", l: 4 },
-    { s: 80, n: "E5", l: 4 }, { s: 84, n: "F5", l: 2 }, { s: 86, n: "E5", l: 2 },
-    { s: 88, n: "C5", l: 4 }, { s: 92, n: "A4", l: 4 },
-    { s: 96, n: "G4", l: 4 }, { s: 100, n: "A4", l: 2 }, { s: 102, n: "C5", l: 2 },
-    { s: 104, n: "B4", l: 4 }, { s: 108, n: "G4", l: 4 },
-    { s: 112, n: "A4", l: 2 }, { s: 114, n: "C5", l: 2 }, { s: 116, n: "E5", l: 4 },
-    { s: 120, n: "D5", l: 2 }, { s: 122, n: "C5", l: 2 }, { s: 124, n: "B4", l: 4 },
+  // A 16-bar journey through A natural minor that resolves G -> Am at the loop.
+  const BARS = [
+    CH.Am, CH.F,  CH.C,  CH.G,
+    CH.Am, CH.Dm, CH.Em, CH.G,
+    CH.C,  CH.G,  CH.Am, CH.F,
+    CH.Dm, CH.Em, CH.F,  CH.G,
   ];
-  const LEAD_AT = {};
-  for (const e of LEAD) LEAD_AT[e.s] = e;
+  const STEPS = BARS.length * 16;     // 256 sixteenth-note steps (~34s)
+  const ARP_IDX = [0, 1, 2, 3, 2, 3, 2, 1, 0, 1, 2, 3, 3, 2, 1, 0];
+  // Syncopated arp rhythm (gaps make it breathe; the delay fills them in).
+  const ARP_HITS = [0, 3, 6, 8, 11, 14];
 
   class AudioEngine {
     constructor() {
@@ -119,32 +115,39 @@
       const six = step % 16;
       const chord = BARS[bar];
 
+      // Section flags drive an evolving 16-bar arrangement so it loops less
+      // obviously: sparse intro, drums/arp build, a mid breakdown, then full.
+      const drumsOn = bar >= 2 && !(bar === 8 || bar === 9); // drop for breakdown
+      const arpOn   = bar >= 1;
+      const bassFull = bar >= 2;                              // 8th pulse vs root-on-beat
+      const half2 = bar >= 8;                                 // second half: busier
+
       // --- pad: sustain chord across the whole bar ---
       if (six === 0) {
         for (const p of chord.pad) this._pad(NOTE[p], time, dt * 16);
       }
 
-      // --- bass: 8th-note pulse on the root, octave lift mid-bar ---
-      if (six % 2 === 0) {
+      // --- bass ---
+      if (bassFull ? six % 2 === 0 : (six === 0 || six === 8)) {
         const accent = six === 0 || six === 8;
-        const f = NOTE[chord.bass] * (six === 14 ? 2 : 1);
+        const f = NOTE[chord.bass] * (six === 14 && bassFull ? 2 : 1);
         this._bass(f, time, dt * 1.7, accent ? 0.28 : 0.2);
       }
 
-      // --- arp: 16ths through chord tones, sent to delay ---
-      this._arp(NOTE[chord.arp[ARP_IDX[six]]], time, dt * 1.4);
-
-      // --- lead (section B) ---
-      const le = LEAD_AT[step];
-      if (le) this._lead(NOTE[le.n], time, dt * le.l * 0.95);
+      // --- arp: syncopated, soft, sent to delay (denser in the 2nd half) ---
+      if (arpOn && (ARP_HITS.includes(six) || (half2 && six % 2 === 1))) {
+        this._arp(NOTE[chord.arp[ARP_IDX[six]]], time, dt * 1.6);
+      }
 
       // --- drums ---
-      if (six === 0 || six === 8) this._kick(time);
-      if (bar % 2 === 1 && six === 14) this._kick(time);          // groove push
-      if (six === 4 || six === 12) this._snare(time);
-      if (bar === 7 && (six === 8 || six === 10 || six === 12 || six === 14))
-        this._snare(time, 0.18);                                  // turnaround fill
-      if (six % 2 === 0) this._hat(time, six % 4 === 2 ? 0.07 : 0.04, six === 14);
+      if (drumsOn) {
+        if (six === 0 || six === 8) this._kick(time);
+        if (bar % 2 === 1 && six === 14) this._kick(time);     // groove push
+        if (six === 4 || six === 12) this._snare(time);
+        if (bar === 15 && (six === 8 || six === 10 || six === 12 || six === 14))
+          this._snare(time, 0.18);                             // turnaround fill
+        if (six % 2 === 0) this._hat(time, six % 4 === 2 ? 0.06 : 0.035, six === 14);
+      }
     }
 
     /* ---------- instruments ---------- */
@@ -174,29 +177,16 @@
     }
 
     _arp(freq, time, dur) {
-      const o = osc(this.ctx, "square", freq, +4);
-      const f = lp(this.ctx, 2800);
+      // triangle = warmer/softer than the old square (less "irritating")
+      const o = osc(this.ctx, "triangle", freq, +3);
+      const f = lp(this.ctx, 2200);
       const env = g(this.ctx, 0);
       env.gain.setValueAtTime(0, time);
-      env.gain.linearRampToValueAtTime(0.085, time + 0.005);
+      env.gain.linearRampToValueAtTime(0.07, time + 0.006);
       env.gain.exponentialRampToValueAtTime(0.0008, time + dur);
       o.connect(f); f.connect(env);
       env.connect(this.music); env.connect(this.delay);
       o.start(time); o.stop(time + dur + 0.02);
-    }
-
-    _lead(freq, time, dur) {
-      const o1 = osc(this.ctx, "sawtooth", freq, -5);
-      const o2 = osc(this.ctx, "square", freq, +5);
-      const f = lp(this.ctx, 3200);
-      const env = g(this.ctx, 0);
-      env.gain.setValueAtTime(0, time);
-      env.gain.linearRampToValueAtTime(0.16, time + 0.02);
-      env.gain.setValueAtTime(0.16, time + dur * 0.6);
-      env.gain.exponentialRampToValueAtTime(0.0008, time + dur);
-      o1.connect(f); o2.connect(f); f.connect(env);
-      env.connect(this.music); env.connect(this.delay);
-      o1.start(time); o2.start(time); o1.stop(time + dur + 0.03); o2.stop(time + dur + 0.03);
     }
 
     _kick(time) {

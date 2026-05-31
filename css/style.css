@@ -15,6 +15,12 @@ html, body {
   font-family: "Courier New", ui-monospace, monospace;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
+  /* iOS: stop tap-hold selection, the magnifier/cursor, and the callout menu */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
 }
 
 #frame {
@@ -34,6 +40,9 @@ html, body {
   background: transparent;
   image-rendering: pixelated;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   cursor: pointer;
   box-shadow: 0 0 60px rgba(56, 246, 255, 0.08);
 }
@@ -100,6 +109,7 @@ button {
   border: none;
   border-radius: 2px;
   cursor: pointer;
+  touch-action: manipulation;   /* no double-tap zoom on taps */
   box-shadow: 0 0 24px var(--neon-soft);
   transition: transform .08s ease, box-shadow .2s ease;
 }
@@ -162,6 +172,7 @@ button:active { transform: scale(0.97); }
   width: 100%;
   accent-color: var(--neon);
   margin-top: 3px;
+  touch-action: pan-x;   /* let the slider be dragged by touch */
 }
 .dbg-reset {
   width: 100%;

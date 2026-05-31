@@ -16,10 +16,10 @@
   // ---- live-tunable params (adjustable via the in-game debug panel) ----
   // Defaults are gentle; open the panel (gear button / "D") to tune.
   const P = {
-    gravity: 0.30,     // downward accel/step when not thrusting
-    thrust: 0.32,      // upward accel/step while held
-    maxVy: 6.5,        // terminal velocity (both directions)
-    baseSpeed: 2.6,    // scroll px/step at difficulty 0
+    gravity: 0.17,     // downward accel/step when not thrusting
+    thrust: 0.13,      // upward accel/step while held
+    maxVy: 3.5,        // terminal velocity (both directions)
+    baseSpeed: 3.9,    // scroll px/step at difficulty 0
     extraSpeed: 3.0,   // added scroll px/step at difficulty 1
     rampDist: 16000,   // px traveled to reach max difficulty
     maxGap: 260,       // tunnel opening at start
@@ -482,6 +482,13 @@
     if (document.hidden) audio.stopMusic();
     else if (state === "play") audio.startMusic();
   });
+
+  // iOS: suppress pinch-zoom and the long-press context menu. Selection, the
+  // magnifier/cursor, and double-tap zoom are handled in CSS (user-select /
+  // touch-callout / touch-action) so we don't interfere with pointer input.
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
+  document.addEventListener("gesturechange", (e) => e.preventDefault());
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   // ---------- debug / tuning panel ----------
   // Live sliders for the physics params. Toggle with the gear button or "D".
